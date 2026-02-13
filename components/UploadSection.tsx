@@ -209,8 +209,8 @@ export default function UploadSection({
     const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    /** Upload file to Google Drive via our API route */
-    const uploadToDrive = async (file: File) => {
+    /** Upload file to Google Drive Knowledge Base folder */
+    const uploadFileToDrive = async (file: File) => {
         setUploadStatus("uploading");
         try {
             const formData = new FormData();
@@ -220,11 +220,36 @@ export default function UploadSection({
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error || `Upload failed (${res.status})`);
             }
+            const result = await res.json();
+            console.log("Google Drive upload result:", result);
             setUploadStatus("success");
         } catch (err) {
             console.error("Drive upload error:", err);
             setUploadStatus("error");
-            setError(err instanceof Error ? err.message : "Failed to upload to Google Drive");
+            setError(err instanceof Error ? err.message : "Failed to upload to Knowledge Base");
+        }
+    };
+
+    /** Upload pasted text as a .txt file to Google Drive Knowledge Base */
+    const uploadTextToDrive = async (text: string) => {
+        setUploadStatus("uploading");
+        try {
+            const res = await fetch("/api/upload-drive", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text, fileName: `pasted-text-${Date.now()}` }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || `Upload failed (${res.status})`);
+            }
+            const result = await res.json();
+            console.log("Text upload result:", result);
+            setUploadStatus("success");
+        } catch (err) {
+            console.error("Text upload error:", err);
+            setUploadStatus("error");
+            setError(err instanceof Error ? err.message : "Failed to upload text to Knowledge Base");
         }
     };
 
@@ -285,8 +310,8 @@ export default function UploadSection({
         if (selectedFile && !isProcessing && !processingDone) {
             // Record doc immediately so it shows in Analytics
             addDocument(selectedFile.name, selectedFile.size);
-            // Upload to Google Drive in parallel with processing visualization
-            uploadToDrive(selectedFile);
+            // Upload to Google Drive KB folder (triggers n8n ingestion pipeline)
+            uploadFileToDrive(selectedFile);
             const t = setTimeout(startProcessing, 600);
             return () => clearTimeout(t);
         }
@@ -399,13 +424,13 @@ export default function UploadSection({
                                 "text-red-500 bg-red-50"
                             }`}>
                             {uploadStatus === "uploading" && (
-                                <><div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />Uploading to Google Drive...</>
+                                <><div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />Uploading to Knowledge Base...</>
                             )}
                             {uploadStatus === "success" && (
-                                <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>Uploaded to Google Drive successfully</>
+                                <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>Uploaded to Knowledge Base — n8n is now indexing</>
                             )}
                             {uploadStatus === "error" && (
-                                <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Google Drive upload failed</>
+                                <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Knowledge Base upload failed</>
                             )}
                         </div>
                     )}
@@ -441,6 +466,23 @@ export default function UploadSection({
                                     className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl text-base text-[#1e293b] placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-[#1a4d4d]/20 focus:border-[#1a4d4d] transition-all resize-none leading-relaxed"
                                 />
                             </div>
+                            {fileUrl.trim() && (
+                                <button
+                                    onClick={() => {
+                                        if (!fileUrl.trim()) return;
+                                        addDocument(`pasted-text-${Date.now()}.txt`, fileUrl.length);
+                                        uploadTextToDrive(fileUrl.trim());
+                                        startProcessing();
+                                    }}
+                                    disabled={uploadStatus === "uploading"}
+                                    className="mt-4 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#1a4d4d] to-[#2d7a6e] hover:from-[#163f3f] hover:to-[#256b60] text-white px-6 py-3.5 rounded-xl text-base font-semibold transition-all duration-150 active:scale-[0.98] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                    </svg>
+                                    Upload Text to Knowledge Base
+                                </button>
+                            )}
                         </>
                     )}
                 </div>

@@ -197,6 +197,8 @@ export default function ChatSection({ uploadedFileName }: { uploadedFileName: st
     const [isTyping, setIsTyping] = useState(false);
     const [showBadge, setShowBadge] = useState(true);
     const [charCount, setCharCount] = useState(0);
+    // Persistent session ID for n8n Simple Memory
+    const [sessionId] = useState(() => `prism-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -232,23 +234,90 @@ export default function ChatSection({ uploadedFileName }: { uploadedFileName: st
         // Record query for analytics
         addQuery(text);
 
-        // Simulate response
-        await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
+        try {
+            // Call the n8n chat API route
+            const res = await fetch("/api/n8n-chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    query: text,
+                    fileName: uploadedFileName || "",
+                    sessionId,
+                }),
+            });
 
-        const resultSet = MOCK_RESULT_SETS[Math.floor(Math.random() * MOCK_RESULT_SETS.length)];
-        const aiMsg: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            role: "assistant",
-            content: `I found ${resultSet.length} relevant sections in Q3_Financial_Report.pdf that address your query. Here are the results ranked by confidence:`,
-            results: resultSet,
-            timestamp: new Date(),
-        };
+            const json = await res.json();
 
-        // Record confidence scores for analytics
-        resultSet.forEach((card) => addConfidenceScore(card.confidence));
+            let aiContent: string;
+            let resultCards: ResultCard[] | undefined;
 
-        setMessages(prev => [...prev, aiMsg]);
-        setIsTyping(false);
+            if (json.success && json.data) {
+                const d = json.data;
+
+                // Handle different n8n response shapes
+                if (Array.isArray(d)) {
+                    // n8n returned an array of results
+                    resultCards = d.map((item: Record<string, unknown>, idx: number) => ({
+                        page: (item.page_number as number) || (item.page as number) || idx + 1,
+                        paragraph: (item.paragraph as number) || 1,
+                        confidence: (item.confidence_score as number) || (item.confidence as number) || 75,
+                        text: (item.extracted_text as string) || (item.text as string) || String(item),
+                        relevanceNote: (item.explanation_of_relevance as string) || (item.relevanceNote as string) || "",
+                        auditStatus: ((item.audit_status as string) === "verified" ? "verified" : "pending") as "verified" | "pending",
+                        auditNote: (item.audit_reasoning as string) || (item.auditNote as string) || "",
+                    }));
+                    aiContent = `I found ${resultCards.length} relevant section(s) in your document. Here are the results ranked by confidence:`;
+                    resultCards.forEach((card) => addConfidenceScore(card.confidence));
+                } else if (d.results && Array.isArray(d.results)) {
+                    resultCards = d.results.map((item: Record<string, unknown>, idx: number) => ({
+                        page: (item.page_number as number) || (item.page as number) || idx + 1,
+                        paragraph: (item.paragraph as number) || 1,
+                        confidence: (item.confidence_score as number) || (item.confidence as number) || 75,
+                        text: (item.extracted_text as string) || (item.text as string) || String(item),
+                        relevanceNote: (item.explanation_of_relevance as string) || (item.relevanceNote as string) || "",
+                        auditStatus: ((item.audit_status as string) === "verified" ? "verified" : "pending") as "verified" | "pending",
+                        auditNote: (item.audit_reasoning as string) || (item.auditNote as string) || "",
+                    }));
+                    aiContent = d.answer || d.message || `I found ${resultCards!.length} relevant section(s):`;
+                    resultCards!.forEach((card) => addConfidenceScore(card.confidence));
+                } else if (d.answer || d.message || d.output || d.response || d.text) {
+                    // Simple text response from n8n
+                    aiContent = d.answer || d.message || d.output || d.response || d.text;
+                } else {
+                    // Fallback: show whatever we got
+                    aiContent = typeof d === "string" ? d : JSON.stringify(d, null, 2);
+                }
+            } else {
+                aiContent = json.error
+                    ? `Sorry, something went wrong: ${json.error}`
+                    : "I received a response but couldn't parse it. Please try again.";
+            }
+
+            const aiMsg: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: "assistant",
+                content: aiContent,
+                results: resultCards,
+                timestamp: new Date(),
+            };
+
+            setMessages(prev => [...prev, aiMsg]);
+        } catch (err) {
+            console.error("Chat error:", err);
+            // Fallback to mock data on network failure
+            const resultSet = MOCK_RESULT_SETS[Math.floor(Math.random() * MOCK_RESULT_SETS.length)];
+            const aiMsg: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: "assistant",
+                content: `⚠️ Could not reach the backend. Showing sample results instead.\n\nI found ${resultSet.length} relevant sections:`,
+                results: resultSet,
+                timestamp: new Date(),
+            };
+            resultSet.forEach((card) => addConfidenceScore(card.confidence));
+            setMessages(prev => [...prev, aiMsg]);
+        } finally {
+            setIsTyping(false);
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {

@@ -1,7 +1,12 @@
 import { AnalysisResult } from "./types";
 
 export const WEBHOOK_URL =
-    process.env.NEXT_PUBLIC_WEBHOOK_URL || "placeholder";
+    process.env.NEXT_PUBLIC_WEBHOOK_URL ||
+    "https://trinitycore.app.n8n.cloud/webhook/upload-analyze";
+
+export const N8N_MCP_URL =
+    process.env.NEXT_PUBLIC_N8N_MCP_URL ||
+    "https://trinitycore.app.n8n.cloud/mcp-server/http";
 
 export const MOCK_RESULTS: AnalysisResult[] = [
     {
